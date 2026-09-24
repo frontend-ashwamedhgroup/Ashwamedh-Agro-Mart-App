@@ -1,0 +1,13 @@
+{
+  "login": {
+    "welcome": "Welcome back",
+    "username": "Username",
+    "password": "Password",
+    "login": "Login",
+    "requiredFields": "Enter your username and password",
+    "invalidCredentials": "Invalid username or password",
+    "darkMode": "Dark mode",
+    "switchToDark": "Switch to Dark",
+    "switchToLight": "Switch to Light"
+  }
+}

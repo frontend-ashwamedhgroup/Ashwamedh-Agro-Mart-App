@@ -1,0 +1,13 @@
+{
+  "login": {
+    "welcome": "वापसी पर स्वागत है",
+    "username": "उपयोगकर्ता नाम",
+    "password": "पासवर्ड",
+    "login": "लॉगिन",
+    "requiredFields": "अपना उपयोगकर्ता नाम और पासवर्ड दर्ज करें",
+    "invalidCredentials": "उपयोगकर्ता नाम या पासवर्ड गलत है",
+    "darkMode": "डार्क मोड",
+    "switchToDark": "डार्क मोड",
+    "switchToLight": "लाइट मोड"
+  }
+}

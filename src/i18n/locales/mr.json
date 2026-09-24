@@ -1,0 +1,13 @@
+{
+  "login": {
+    "welcome": "पुन्हा स्वागत आहे",
+    "username": "वापरकर्तानाव",
+    "password": "पासवर्ड",
+    "login": "लॉगिन",
+    "requiredFields": "तुमचे वापरकर्तानाव आणि पासवर्ड प्रविष्ट करा",
+    "invalidCredentials": "वापरकर्तानाव किंवा पासवर्ड चुकीचा आहे",
+    "darkMode": "डार्क मोड",
+    "switchToDark": "डार्क मोड",
+    "switchToLight": "लाईट मोड"
+  }
+}
