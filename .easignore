@@ -1,0 +1,50 @@
+# Mirrors .gitignore but does NOT exclude .env, so EAS Build can read
+# EXPO_PUBLIC_* variables (Google Maps keys, API URL).
+
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+.env
+.env.development
+
+# claude
+.claude
+
+productapi.md
+auth.md
+api.md
+Crop_Doctor_AI.md
+orderflow.md

@@ -1,11 +1,20 @@
+import { asyncStorage } from "./asyncStorage";
 import { secureStorage } from "./secureStorage";
 
 const AUTH_TOKEN_KEY = "authToken";
 
+export type AuthUser = {
+  id: number;
+  mobile_number: string;
+  email: string;
+  account_type: string;
+  is_active: boolean;
+};
+
 export type TokenData = {
   access: string;
   refresh: string;
-  user_name: string;
+  user: AuthUser;
 };
 
 export const authStorage = {
@@ -35,6 +44,17 @@ export const authStorage = {
   // LOGOUT / CLEAR
   // =========================
   async clearAll(): Promise<void> {
-    await this.removeToken();
+    // SecureStore has no "clear all"; the auth token is its only key.
+    // Run both so a failure in one doesn't leave the other populated.
+    const results = await Promise.allSettled([
+      this.removeToken(),
+      asyncStorage.clearAll(),
+    ]);
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed) {
+      throw failed.reason;
+    }
   },
 };

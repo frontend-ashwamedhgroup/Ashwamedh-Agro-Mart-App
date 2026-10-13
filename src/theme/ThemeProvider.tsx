@@ -5,10 +5,12 @@
 import React, {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
 import { useColorScheme } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { darkTheme } from './dark';
 import { lightTheme } from './light';
@@ -18,12 +20,15 @@ import { spacing } from './spacing';
 import { typography } from './typography';
 import { Theme } from './types';
 
-type ThemeMode = 'light' | 'dark';
+export type ThemePreference = 'system' | 'light' | 'dark';
+type ThemeMode = Exclude<ThemePreference, 'system'>;
+const THEME_STORAGE_KEY = '@ashwamedhmart_theme';
 
 type ThemeContextType = {
   theme: Theme;
   mode: ThemeMode;
-  setMode: (mode: ThemeMode) => void;
+  preference: ThemePreference;
+  setMode: (mode: ThemePreference) => void;
 };
 
 const ThemeContext = createContext<ThemeContextType | undefined>(
@@ -38,10 +43,46 @@ export function ThemeProvider({
   children,
 }: ThemeProviderProps) {
   const systemColorScheme = useColorScheme();
+  const [preference, setPreference] = useState<ThemePreference>('system');
 
-  const [mode, setMode] = useState<ThemeMode>(
-    systemColorScheme === 'dark' ? 'dark' : 'light',
-  );
+  useEffect(() => {
+    let isMounted = true;
+
+    AsyncStorage.getItem(THEME_STORAGE_KEY)
+      .then((storedPreference) => {
+        if (
+          isMounted &&
+          (storedPreference === 'system' ||
+            storedPreference === 'light' ||
+            storedPreference === 'dark')
+        ) {
+          setPreference(storedPreference);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to load theme preference:', error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const mode: ThemeMode =
+    preference === 'system'
+      ? systemColorScheme === 'dark'
+        ? 'dark'
+        : 'light'
+      : preference;
+
+  const setMode = (nextPreference: ThemePreference) => {
+    setPreference(nextPreference);
+    AsyncStorage.setItem(THEME_STORAGE_KEY, nextPreference).catch(
+      (error: unknown) => {
+        console.error('Failed to save theme preference:', error);
+      },
+    );
+  };
 
   const theme = useMemo<Theme>(() => {
     const baseTheme =
@@ -61,6 +102,7 @@ export function ThemeProvider({
       value={{
         theme,
         mode,
+        preference,
         setMode,
       }}
     >

@@ -31,6 +31,8 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.development
 .env*.local
 
 # typescript
@@ -42,8 +44,16 @@ example
 /ios
 /android
 
+# Docs
 CLAUDE.md
 AGENTS.md
 README.md
+api.md
 
+# google service key
+ashwamedh-agro-mart.json
 
+Crop_Doctor_AI.md
+auth.md
+orderflow.md
+productapi.md
