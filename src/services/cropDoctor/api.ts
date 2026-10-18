@@ -7,8 +7,10 @@ import {
   unwrapEnvelope,
 } from "../api/errors";
 import type {
+  ConfirmationStatus,
   Crop,
   Diagnosis,
+  DiagnosisDetails,
   DiagnosisOutcome,
   DiagnosisRequest,
   LikelyCondition,
@@ -24,7 +26,8 @@ const FARMER = "/api/v1/farmer";
 const SLOW_REQUEST_TIMEOUT_MS = 60_000;
 
 const OUTCOMES: DiagnosisOutcome[] = ["sure", "unsure", "no_product", "healthy"];
-const PRICE_STATUSES: PriceStatus[] = ["preparing", "ready", "unavailable"];
+const PRICE_STATUSES: PriceStatus[] = ["awaiting_confirmation", "ready", "unavailable"];
+const CONFIRMATION_STATUSES: ConfirmationStatus[] = ["pending", "confirmed", "rejected"];
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 
@@ -32,6 +35,41 @@ const asString = (value: unknown): string => (typeof value === "string" ? value 
 
 const isCrop = (value: unknown): value is Crop =>
   isRecord(value) && typeof value.id === "number" && typeof value.name === "string";
+
+const asStrings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && v !== "") : [];
+
+function parseDisease(value: unknown): Diagnosis["disease"] {
+  if (!isRecord(value) || !asString(value.name)) return null;
+  return {
+    name: asString(value.name),
+    symptoms: asStrings(value.symptoms),
+    causes: asStrings(value.causes),
+    severity: asString(value.severity) || undefined,
+    severity_label: asString(value.severity_label) || undefined,
+    preventive_measures: asStrings(value.preventive_measures),
+    recommended_treatment: asString(value.recommended_treatment) || undefined,
+  };
+}
+
+function parseDetails(value: unknown): DiagnosisDetails | null {
+  if (!isRecord(value)) return null;
+  return {
+    summary: asString(value.summary),
+    disease_name: asString(value.disease_name),
+    affected_crop: asString(value.affected_crop),
+    symptoms: asStrings(value.symptoms),
+    causes: asStrings(value.causes),
+    severity: asString(value.severity),
+    severity_label: asString(value.severity_label),
+    confidence_label: asString(value.confidence_label),
+    preventive_measures: asStrings(value.preventive_measures),
+    recommended_treatment: asString(value.recommended_treatment),
+    precautions: asString(value.precautions),
+    potential_impact: asString(value.potential_impact),
+    farmer_message: asString(value.farmer_message),
+  };
+}
 
 function parseDiagnosis(value: unknown): Diagnosis {
   if (!isRecord(value) || typeof value.id !== "number") {
@@ -61,6 +99,9 @@ function parseDiagnosis(value: unknown): Diagnosis {
     ? (value.price_status as PriceStatus)
     : "unavailable";
 
+  // Older records have no bilingual block; the English top-level fields still work.
+  const details = isRecord(value.diagnosis_details) ? value.diagnosis_details : null;
+
   return {
     id: value.id,
     image_id: typeof value.image_id === "number" ? value.image_id : undefined,
@@ -74,15 +115,24 @@ function parseDiagnosis(value: unknown): Diagnosis {
     outcome: value.outcome as DiagnosisOutcome,
     summary: asString(value.summary),
     likely_conditions: conditions,
+    disease: parseDisease(value.disease),
     observations: Array.isArray(value.observations)
       ? value.observations.filter((o): o is string => typeof o === "string")
       : [],
     severity: asString(value.severity) || undefined,
     confidence_label: asString(value.confidence_label),
     farmer_message: asString(value.farmer_message),
+    diagnosis_details: {
+      en: parseDetails(details?.en),
+      mr: parseDetails(details?.mr),
+    },
     disclaimer: asString(value.disclaimer),
     contact_phone: asString(value.contact_phone),
     price_status: priceStatus,
+    // Unknown means "already answered": never offer Yes/No on a state we cannot read.
+    confirmation_status: CONFIRMATION_STATUSES.includes(value.confirmation_status as ConfirmationStatus)
+      ? (value.confirmation_status as ConfirmationStatus)
+      : "confirmed",
     // The price is shown only when it is ready, whatever else the server sent.
     price: priceStatus === "ready" ? price : null,
     created_at: asString(value.created_at),
@@ -173,11 +223,23 @@ export async function uploadDiagnosisImage(photo: PickedPhoto): Promise<number> 
 /** Step 2: send the form with the uploaded `image_id`. */
 export async function createDiagnosis(request: DiagnosisRequest): Promise<Diagnosis> {
   const started = Date.now();
-  const { data } = await apiClient.post<ApiEnvelope<{ diagnosis: unknown }>>(
-    `${FARMER}/diagnoses/`,
-    request,
-    { timeout: SLOW_REQUEST_TIMEOUT_MS },
-  );
+  let data: ApiEnvelope<{ diagnosis: unknown }>;
+  try {
+    ({ data } = await apiClient.post<ApiEnvelope<{ diagnosis: unknown }>>(
+      `${FARMER}/diagnoses/`,
+      request,
+      { timeout: SLOW_REQUEST_TIMEOUT_MS },
+    ));
+  } catch (error) {
+    // Surface what the server actually said (a 500 body often holds the cause).
+    const response = (error as { response?: { status?: number; data?: unknown } }).response;
+    console.error("[CropDoctor] POST diagnoses failed", {
+      status: response?.status,
+      body: response?.data,
+      ms: Date.now() - started,
+    });
+    throw error;
+  }
   console.log("[CropDoctor] POST diagnoses ok", { ms: Date.now() - started });
   try {
     return parseDiagnosis(unwrapEnvelope<{ diagnosis: unknown }>(data).diagnosis);
@@ -217,6 +279,7 @@ export async function fetchDiagnosis(id: number | string): Promise<Diagnosis> {
       id: diagnosis.id,
       outcome: diagnosis.outcome,
       priceStatus: diagnosis.price_status,
+      confirmation: diagnosis.confirmation_status,
       hasPrice: diagnosis.price !== null,
     });
     return diagnosis;
@@ -224,6 +287,20 @@ export async function fetchDiagnosis(id: number | string): Promise<Diagnosis> {
     console.error("[CropDoctor] diagnosis response could not be parsed", error, data);
     throw error;
   }
+}
+
+/**
+ * Answers "is this the problem the AI found?" for a sure diagnosis. The reply is
+ * the updated diagnosis, with the price already on it when Yes succeeded.
+ */
+export async function confirmDiagnosis(id: number, confirmed: boolean): Promise<Diagnosis> {
+  console.log("[CropDoctor] confirm diagnosis", { id, confirmed });
+  const { data } = await apiClient.post<ApiEnvelope<{ diagnosis: unknown }>>(
+    `${FARMER}/diagnoses/${id}/confirm/`,
+    { confirmed },
+    { timeout: SLOW_REQUEST_TIMEOUT_MS },
+  );
+  return parseDiagnosis(unwrapEnvelope<{ diagnosis: unknown }>(data).diagnosis);
 }
 
 /** All offers; the screen picks the one whose `diagnosis_id` matches. */

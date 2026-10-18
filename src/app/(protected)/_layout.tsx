@@ -16,6 +16,8 @@ export default function ProtectedLayout() {
         <Stack.Screen name="products" />
         <Stack.Screen name="product/[id]" />
         <Stack.Screen name="checkout" />
+        {/* Swiping back would return to an already-ordered checkout. */}
+        <Stack.Screen name="order-success" options={{ gestureEnabled: false }} />
         <Stack.Screen name="order/[id]" />
         <Stack.Screen name="invoice/[id]" />
         <Stack.Screen name="crop-doctor/new" />

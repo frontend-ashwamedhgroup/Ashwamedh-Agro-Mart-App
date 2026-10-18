@@ -10,7 +10,7 @@
  */
 
 import * as Location from "expo-location";
-import { router } from "expo-router";
+import { type Href, router } from "expo-router";
 import {
   createContext,
   type ReactNode,
@@ -37,12 +37,15 @@ import type {
 import {
   applyGeocodedAddress,
   EMPTY_DRAFT,
+  getGeocodedLine,
   getPlaceSubtitle,
   getPlaceTitle,
   INDIA_CENTER,
 } from "../components/location/utils";
+import LocationServicesModal from "../components/location/LocationServicesModal";
 import { useCurrentLocation } from "../hooks/useCurrentLocation";
 import { useFarmerAddresses } from "../hooks/useFarmerAddresses";
+import { useLocationServices } from "../hooks/useLocationServices";
 
 const REVERSE_GEOCODE_DELAY_MS = 500;
 
@@ -55,6 +58,8 @@ export type Pin = {
 type PinPlace = {
   title: string;
   subtitle: string;
+  /** Street-level text for `address_line1` (see getGeocodedLine). */
+  line1: string;
   failed: boolean;
 };
 
@@ -64,11 +69,27 @@ type LocationContextType = {
   addresses: ReturnType<typeof useFarmerAddresses>;
   current: ReturnType<typeof useCurrentLocation>;
   isFirstAddress: boolean;
+  /** Phone-wide location switch; `isEnabled` is null until first checked. */
+  services: {
+    isEnabled: boolean | null;
+    openSettings: () => Promise<void>;
+    /** Shows the "turn on location" sheet again after it was dismissed. */
+    showPrompt: () => void;
+  };
 
   /** Saves the choice as the browsing location and closes the whole flow. */
   chooseLocation: (next: LocationSelection) => Promise<void>;
-  /** Starts the map flow at `coordinate`, or at the best guess if omitted. */
-  openMap: (coordinate?: Coordinate) => Promise<void>;
+  /**
+   * Starts the map flow at `coordinate`, or at the best guess if omitted.
+   * `returnTo` is the screen to land on after saving (default: close the
+   * whole stack), e.g. checkout adding an address without being left.
+   */
+  openMap: (
+    coordinate?: Coordinate,
+    options?: { returnTo?: Href },
+  ) => Promise<void>;
+  /** Forgets `returnTo` when the map flow is left without saving. */
+  clearReturnTo: () => void;
 
   pin: Pin;
   setPinCoordinate: (coordinate: Coordinate) => void;
@@ -83,7 +104,7 @@ type LocationContextType = {
 
 const LocationContext = createContext<LocationContextType | null>(null);
 
-const NO_PLACE: PinPlace = { title: "", subtitle: "", failed: false };
+const NO_PLACE: PinPlace = { title: "", subtitle: "", line1: "", failed: false };
 
 export function LocationProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -126,6 +147,52 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   const { status, canAskAgain, requestPermission } = current;
   const hasAskedForPermission = useRef(false);
 
+  // The "turn on location" sheet waits until the permission question has been
+  // answered, so it never stacks on top of the system permission dialog. Once
+  // dismissed it stays hidden until location is switched on and off again, or
+  // the farmer asks for it (showServicesPrompt).
+  const {
+    isEnabled: servicesEnabled,
+    openSettings: openServicesSettings,
+    refresh: refreshServices,
+  } = useLocationServices();
+  const [servicesDismissed, setServicesDismissed] = useState(false);
+  const permissionAnswered =
+    status !== null && status !== "undetermined" && !current.isRequesting;
+  const servicesPromptVisible =
+    servicesEnabled === false && permissionAnswered && !servicesDismissed;
+
+  // Adjusted during render (not in an effect): switching location back on
+  // re-arms the sheet for the next time it is turned off.
+  const [previousServicesEnabled, setPreviousServicesEnabled] =
+    useState(servicesEnabled);
+  if (previousServicesEnabled !== servicesEnabled) {
+    setPreviousServicesEnabled(servicesEnabled);
+    if (servicesEnabled) {
+      setServicesDismissed(false);
+    }
+  }
+
+  const dismissServicesPrompt = useCallback(
+    () => setServicesDismissed(true),
+    [],
+  );
+  // Called when something the farmer tapped needed location and found it off.
+  // Re-checks first: the switch may have been flipped from the notification
+  // shade, which doesn't bring the app back to the foreground.
+  const showServicesPrompt = useCallback(() => {
+    setServicesDismissed(false);
+    void refreshServices();
+  }, [refreshServices]);
+  const services = useMemo(
+    () => ({
+      isEnabled: servicesEnabled,
+      openSettings: openServicesSettings,
+      showPrompt: showServicesPrompt,
+    }),
+    [servicesEnabled, openServicesSettings, showServicesPrompt],
+  );
+
   useEffect(() => {
     if (
       hasAskedForPermission.current ||
@@ -156,6 +223,13 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       try {
         [nextPlace = null] = await Location.reverseGeocodeAsync(coordinate);
         failed = !nextPlace;
+        // TEMP DEBUG: raw geocoder result (remove after checking the mapping).
+        console.log(
+          "[GEOCODE] coordinate:",
+          JSON.stringify(coordinate),
+          "\n[GEOCODE] place:",
+          JSON.stringify(nextPlace, null, 2),
+        );
       } catch (error: unknown) {
         console.warn("Reverse geocoding failed:", error);
         failed = true;
@@ -167,6 +241,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       setPlace({
         title: getPlaceTitle(nextPlace),
         subtitle: getPlaceSubtitle(nextPlace),
+        line1: getGeocodedLine(nextPlace),
         failed,
       });
       setDraft((currentDraft) => applyGeocodedAddress(currentDraft, nextPlace));
@@ -179,12 +254,24 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     };
   }, [pin]);
 
+  // Where the map flow returns after saving; null closes the whole stack.
+  const returnTo = useRef<Href | null>(null);
+  const clearReturnTo = useCallback(() => {
+    returnTo.current = null;
+  }, []);
+
   const chooseLocation = useCallback(
     async (next: LocationSelection) => {
       try {
         const nextRecent = await saveSelection(next, recent);
         setSelection(next);
-        router.dismissAll();
+        const target = returnTo.current;
+        returnTo.current = null;
+        if (target) {
+          router.dismissTo(target);
+        } else {
+          router.dismissAll();
+        }
         // Reorder the list only after the modal is on its way out. Doing it
         // before re-renders the sheet mid-dismiss (a tapped recent item moves
         // to the top, remounting rows), which can leave a blank screen.
@@ -198,14 +285,37 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   );
 
   const openMap = useCallback(
-    async (coordinate?: Coordinate) => {
+    async (coordinate?: Coordinate, options?: { returnTo?: Href }) => {
+      returnTo.current = options?.returnTo ?? null;
       let point = coordinate;
 
       if (!point) {
-        // "Add new address": centre on the farmer if we can, else on the last
-        // chosen place, else on India.
-        const located = await current.locate();
-        point = located.ok ? located.coordinate : selection?.coordinate;
+        // "Add new address" needs the phone's location switch. Check it on every
+        // tap, before the cached fix below, which would hide that it's off.
+        // While it's off, show the "turn on location" sheet, not the map.
+        const servicesOn = await Location.hasServicesEnabledAsync().catch(
+          () => true,
+        );
+        if (!servicesOn && permissionAnswered) {
+          showServicesPrompt();
+          return;
+        }
+
+        // Open on where the farmer is right now. A cached fix
+        // opens the map instantly; the map then refines it with a fresh one.
+        // Falls back to India, never to a previously chosen place.
+        const cached = current.isGranted
+          ? await Location.getLastKnownPositionAsync().catch(() => null)
+          : null;
+        if (cached) {
+          point = {
+            latitude: cached.coords.latitude,
+            longitude: cached.coords.longitude,
+          };
+        } else {
+          const located = await current.locate();
+          point = located.ok ? located.coordinate : undefined;
+        }
       }
 
       setDraft(EMPTY_DRAFT);
@@ -218,7 +328,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       );
       router.push("/(protected)/location-map");
     },
-    [current, selection?.coordinate],
+    [current, permissionAnswered, showServicesPrompt],
   );
 
   const setPinCoordinate = useCallback((coordinate: Coordinate) => {
@@ -245,8 +355,10 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       addresses,
       current,
       isFirstAddress,
+      services,
       chooseLocation,
       openMap,
+      clearReturnTo,
       pin,
       setPinCoordinate,
       place,
@@ -255,11 +367,13 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       updateDraft,
     }),
     [
+      clearReturnTo,
       selection,
       recent,
       addresses,
       current,
       isFirstAddress,
+      services,
       chooseLocation,
       openMap,
       pin,
@@ -274,6 +388,11 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   return (
     <LocationContext.Provider value={value}>
       {children}
+      <LocationServicesModal
+        visible={servicesPromptVisible}
+        onDismiss={dismissServicesPrompt}
+        onOpenSettings={openServicesSettings}
+      />
     </LocationContext.Provider>
   );
 }

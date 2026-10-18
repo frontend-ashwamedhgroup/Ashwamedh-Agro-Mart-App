@@ -24,7 +24,8 @@ export default function LocationMapScreen() {
   const { theme } = useTheme();
   const { brand } = useBrandColors();
   const { t } = useTranslation();
-  const { pin, setPinCoordinate, current } = useLocationFlow();
+  const { pin, setPinCoordinate, current, services, clearReturnTo } =
+    useLocationFlow();
   const { colors } = theme;
   const { height } = useWindowDimensions();
   // Bottom part of the map hidden by the delivery-details sheet.
@@ -47,6 +48,10 @@ export default function LocationMapScreen() {
     router.push("/(protected)/delivery-details");
   }, []);
 
+  // Leaving the map without saving must not send a later, unrelated location
+  // choice back to the screen that opened it.
+  useEffect(() => clearReturnTo, [clearReturnTo]);
+
   const isFocused = useIsFocused();
   const sheetHasOpened = useRef(false);
   useEffect(() => {
@@ -57,7 +62,9 @@ export default function LocationMapScreen() {
     }
   }, [isFocused]);
 
-  const goToCurrentLocation = async () => {
+  // `promptIfOff` is for the farmer's own tap; the automatic fix on open stays
+  // quiet so the "turn on location" sheet doesn't pop up on every map visit.
+  const goToCurrentLocation = async (promptIfOff = false) => {
     setIsLocating(true);
     setError("");
     const result = await current.locate();
@@ -71,11 +78,29 @@ export default function LocationMapScreen() {
     } else if (result.reason === "permission") {
       setError(t("location.permissionDenied"));
     } else if (result.reason === "services") {
-      setError(t("location.servicesDisabled"));
+      // On a tap, the "turn on location" sheet explains it; no inline message.
+      if (promptIfOff) {
+        services.showPrompt();
+      } else {
+        setError(t("location.servicesDisabled"));
+      }
     } else {
       setError(t("location.currentUnavailable"));
     }
   };
+
+  // Opening the map to add an address starts on the farmer's real position:
+  // refine the cached starting point with a fresh GPS fix.
+  const hasAutoLocated = useRef(false);
+  useEffect(() => {
+    if (hasAutoLocated.current) {
+      return;
+    }
+    hasAutoLocated.current = true;
+    void goToCurrentLocation();
+    // Runs once on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -155,7 +180,7 @@ export default function LocationMapScreen() {
           <Pressable
             accessibilityRole="button"
             disabled={isLocating}
-            onPress={goToCurrentLocation}
+            onPress={() => void goToCurrentLocation(true)}
             style={[
               styles.pill,
               { backgroundColor: colors.surface, borderColor: colors.border },

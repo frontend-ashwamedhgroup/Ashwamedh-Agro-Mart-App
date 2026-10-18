@@ -3,7 +3,8 @@
 // returned to farmers, so none are modelled here.
 
 export type DiagnosisOutcome = "sure" | "unsure" | "no_product" | "healthy";
-export type PriceStatus = "preparing" | "ready" | "unavailable";
+export type PriceStatus = "awaiting_confirmation" | "ready" | "unavailable";
+export type ConfirmationStatus = "pending" | "confirmed" | "rejected";
 export type ApplicationMethod = "spray" | "soil_drench" | "drip";
 
 export type Crop = {
@@ -15,6 +16,37 @@ export type Crop = {
 export type LikelyCondition = {
   name: string;
   evidence: string;
+};
+
+export type Disease = {
+  name: string;
+  symptoms: string[];
+  causes: string[];
+  severity?: string;
+  severity_label?: string;
+  preventive_measures: string[];
+  recommended_treatment?: string;
+};
+
+/** Languages the server writes `diagnosis_details` in. The result opens in English. */
+export type DiagnosisLanguage = "en" | "mr";
+export const DEFAULT_DIAGNOSIS_LANGUAGE: DiagnosisLanguage = "en";
+
+/** Farmer-facing text in one language. Empty means the server did not send it. */
+export type DiagnosisDetails = {
+  summary: string;
+  disease_name: string;
+  affected_crop: string;
+  symptoms: string[];
+  causes: string[];
+  severity: string;
+  severity_label: string;
+  confidence_label: string;
+  preventive_measures: string[];
+  recommended_treatment: string;
+  precautions: string;
+  potential_impact: string;
+  farmer_message: string;
 };
 
 export type DiagnosisPrice = {
@@ -36,13 +68,17 @@ export type Diagnosis = {
   outcome: DiagnosisOutcome;
   summary: string;
   likely_conditions: LikelyCondition[];
+  disease: Disease | null;
   observations: string[];
   severity?: string;
   confidence_label: string;
   farmer_message: string;
+  /** Same result in English and Marathi; either may be missing on older records. */
+  diagnosis_details: Record<DiagnosisLanguage, DiagnosisDetails | null>;
   disclaimer: string;
   contact_phone: string;
   price_status: PriceStatus;
+  confirmation_status: ConfirmationStatus;
   price: DiagnosisPrice | null;
   created_at: string;
 };

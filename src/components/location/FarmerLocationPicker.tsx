@@ -3,26 +3,75 @@
  * location flow (see LocationContext for the screens involved).
  */
 
+import * as Location from "expo-location";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text } from "react-native";
 
 import { useLocationFlow } from "../../context/LocationContext";
 import { useTheme } from "../../theme";
+import { getPlaceSubtitle, joinParts } from "./utils";
 import { useBrandColors } from "./useBrandColors";
 
 export default function FarmerLocationPicker() {
   const { theme } = useTheme();
   const { brand } = useBrandColors();
   const { t } = useTranslation();
-  const { selection } = useLocationFlow();
+  const { selection, current, services } = useLocationFlow();
   const { colors } = theme;
+  const [deviceLabel, setDeviceLabel] = useState<string | null>(null);
+  const { isGranted, locate } = current;
+  const servicesOff = services.isEnabled === false;
+
+  // Display only: with nothing chosen yet, show where the farmer is right now.
+  // This is never saved as the browsing location. Re-runs when the phone's
+  // location switch is turned on, since permission alone doesn't change then.
+  useEffect(() => {
+    if (selection || !isGranted || servicesOff) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const located = await locate();
+      if (!located.ok || cancelled) {
+        return;
+      }
+
+      try {
+        const [place = null] = await Location.reverseGeocodeAsync(
+          located.coordinate,
+        );
+        const label =
+          joinParts([place?.name, place?.district, place?.city]) ||
+          getPlaceSubtitle(place);
+        if (!cancelled && label) {
+          setDeviceLabel(label);
+        }
+      } catch (error: unknown) {
+        console.warn("Reverse geocoding the current location failed:", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // `locate` changes identity with permission state; only re-run on grant.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, isGranted, servicesOff]);
+
+  const displayLabel =
+    selection?.label ??
+    (servicesOff ? t("location.turnOnLocation") : deviceLabel) ??
+    t("location.chooseLocation");
 
   return (
     <Pressable
       accessibilityHint={t("location.changeLocation")}
-      accessibilityLabel={selection?.label ?? t("location.chooseLocation")}
+      accessibilityLabel={displayLabel}
       accessibilityRole="button"
       onPress={() => router.push("/(protected)/location")}
       style={({ pressed }) => [styles.trigger, { opacity: pressed ? 0.6 : 1 }]}
@@ -41,7 +90,7 @@ export default function FarmerLocationPicker() {
         numberOfLines={1}
         style={[styles.triggerText, { color: colors.textSecondary }]}
       >
-        {selection?.label ?? t("location.chooseLocation")}
+        {displayLabel}
       </Text>
       <SymbolView
         name={{

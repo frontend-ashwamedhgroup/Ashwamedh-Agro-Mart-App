@@ -42,6 +42,7 @@ const ADDRESS_ICONS = {
 export function LocationSheet() {
   const {
     current,
+    services,
     addresses,
     recent,
     chooseLocation: onSelect,
@@ -60,17 +61,39 @@ export function LocationSheet() {
   const { brand, brandSoft } = useBrandColors();
   const { t } = useTranslation();
   const [failure, setFailure] = useState<CurrentLocationFailure | null>(null);
+  // Which row is waiting. Kept here rather than read from `current.isLocating`,
+  // which is shared with "Add new address" and the header picker, so only the
+  // tapped row shows a spinner.
+  const [busyAction, setBusyAction] = useState<"current" | "add" | null>(null);
 
   const { colors } = theme;
   const card = { backgroundColor: colors.surface, borderColor: colors.border };
 
   const useMyLocation = async () => {
     setFailure(null);
-    const result = await current.locate();
-    if (result.ok) {
-      onPickPoint(result.coordinate);
-    } else {
-      setFailure(result.reason);
+    setBusyAction("current");
+    try {
+      const result = await current.locate();
+      if (result.ok) {
+        await onPickPoint(result.coordinate);
+      } else if (result.reason === "services") {
+        // The "turn on location" sheet explains this; no inline message.
+        services.showPrompt();
+      } else {
+        setFailure(result.reason);
+      }
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const addNewAddress = async () => {
+    setFailure(null);
+    setBusyAction("add");
+    try {
+      await onPickPoint();
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -107,11 +130,12 @@ export function LocationSheet() {
         <>
             <ActionRow
               accent={brand}
-              busy={current.isLocating}
+              busy={busyAction === "current"}
+              disabled={busyAction !== null}
               icon={{ ios: "scope", android: "my_location" }}
               onPress={useMyLocation}
               subtitle={
-                current.isLocating
+                busyAction === "current"
                   ? t("location.gettingLocation")
                   : t("location.currentLocationHint")
               }
@@ -140,8 +164,10 @@ export function LocationSheet() {
 
             <ActionRow
               accent={brand}
+              busy={busyAction === "add"}
+              disabled={busyAction !== null}
               icon={{ ios: "plus", android: "add" }}
-              onPress={() => onPickPoint()}
+              onPress={addNewAddress}
               title={t("location.addNewAddress")}
             />
 
@@ -260,6 +286,8 @@ type ActionRowProps = {
   title: string;
   subtitle?: string;
   busy?: boolean;
+  /** Blocks taps without a spinner, e.g. while the other row is busy. */
+  disabled?: boolean;
   icon: { ios: "scope" | "plus"; android: "my_location" | "add" };
   onPress: () => void;
 };
@@ -269,6 +297,7 @@ function ActionRow({
   title,
   subtitle,
   busy,
+  disabled,
   icon,
   onPress,
 }: ActionRowProps) {
@@ -279,7 +308,7 @@ function ActionRow({
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ busy: Boolean(busy) }}
-      disabled={busy}
+      disabled={busy || disabled}
       onPress={onPress}
       style={[
         styles.row,

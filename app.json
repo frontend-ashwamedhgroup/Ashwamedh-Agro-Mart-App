@@ -83,6 +83,14 @@
           "photosPermission": "Ashwamedh Agro Mart reads a photo you choose so AI Crop Doctor can check your crop.",
           "microphonePermission": false
         }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "ashwamedh-agro-mart",
+          "organization": "ashwamedhgroup"
+        }
       ]
     ],
     "experiments": {

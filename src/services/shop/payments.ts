@@ -7,8 +7,9 @@ import { AppState, DeviceEventEmitter } from "react-native";
 import RazorpayCheckout from "react-native-razorpay";
 
 import type { ApiEnvelope } from "../../components/location/types";
+import i18n from "../../i18n";
 import apiClient from "../api/client";
-import { isRetryableError } from "../api/errors";
+import { getErrorMessage, isRetryableError } from "../api/errors";
 
 const PAYMENTS = "/api/v1/farmer/payments/razorpay";
 
@@ -42,6 +43,23 @@ export class PaymentCancelledError extends Error {
   constructor() {
     super("Payment cancelled");
     this.name = "PaymentCancelledError";
+  }
+}
+
+/** What Razorpay reported about a failed payment. */
+export type PaymentFailureDetails = {
+  code?: string;
+  description?: string;
+  reason?: string;
+  source?: string;
+  step?: string;
+  paymentId?: string;
+};
+
+export class PaymentFailedError extends Error {
+  constructor(readonly details: PaymentFailureDetails) {
+    super(details.description || "Payment failed");
+    this.name = "PaymentFailedError";
   }
 }
 
@@ -114,6 +132,49 @@ export async function verifyRazorpayPayment(
 // Razorpay Android codes: 0 = network error, 2 = user cancelled; iOS cancel is 2 as well.
 const CANCEL_CODE = 2;
 
+type RazorpayError = { code?: number; description?: string; error?: unknown };
+
+/**
+ * Razorpay's failure body is `{ error: { code, description, reason, source, step, metadata } }`.
+ * Android sends it as a JSON string in `description`; iOS sends it as `error`.
+ */
+function parseRazorpayError(raw: RazorpayError | undefined): PaymentFailureDetails {
+  let body: Loose | undefined;
+  if (raw?.error && typeof raw.error === "object") {
+    body = raw.error as Loose;
+  } else if (raw?.description?.trim().startsWith("{")) {
+    try {
+      body = JSON.parse(raw.description) as Loose;
+    } catch {
+      body = undefined;
+    }
+  }
+  const inner = (body?.error ?? body ?? {}) as Loose;
+  const metadata = (inner.metadata ?? {}) as Loose;
+  return {
+    code: str(inner.code) ?? (raw?.code !== undefined ? String(raw.code) : undefined),
+    description: str(inner.description) ?? (body ? undefined : str(raw?.description)),
+    reason: str(inner.reason),
+    source: str(inner.source),
+    step: str(inner.step),
+    paymentId: str(metadata.payment_id),
+  };
+}
+
+/** The alert text for a failed payment: Razorpay's response, or the server's message. */
+export function describePaymentFailure(error: unknown): string {
+  if (!(error instanceof PaymentFailedError)) return getErrorMessage(error);
+  const { code, description, reason, paymentId } = error.details;
+  return [
+    description || i18n.t("shopping.paymentFailed"),
+    reason ? `${i18n.t("shopping.paymentFailureReason")}: ${reason.replace(/_/g, " ")}` : null,
+    code ? `${i18n.t("shopping.paymentFailureCode")}: ${code}` : null,
+    paymentId ? `${i18n.t("shopping.paymentFailureId")}: ${paymentId}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function openCheckout(
   order: RazorpayOrder,
   title: string,
@@ -153,10 +214,10 @@ function openCheckout(
       return result;
     })
     .finally(() => subs.forEach((sub) => sub.remove()))
-    .catch((error: { code?: number; description?: string }) => {
+    .catch((error: RazorpayError) => {
     logPayment("checkout sheet ✗ error", error);
     if (error?.code === CANCEL_CODE) throw new PaymentCancelledError();
-    throw new Error(error?.description || "Payment failed");
+    throw new PaymentFailedError(parseRazorpayError(error));
   }) as Promise<RazorpaySuccess>;
 }
 
@@ -164,13 +225,21 @@ function openCheckout(
 const paidAwaitingVerification = new Map<string, RazorpaySuccess>();
 
 /**
- * Runs the whole online payment for an order. Resolves once the server has
- * verified the payment; throws PaymentCancelledError if the farmer backs out.
+ * Runs the whole online payment for an order. Resolves with the Razorpay
+ * payment id once the server has verified the payment; throws
+ * PaymentCancelledError if the farmer backs out.
  */
 export async function payForOrder(
   orderId: number | string,
-  options: { title: string; description: string; payer?: PayerInfo; color: string },
-): Promise<void> {
+  options: {
+    title: string;
+    description: string;
+    payer?: PayerInfo;
+    color: string;
+    /** Called once Razorpay reports success, before the server has verified it. */
+    onAuthorized?: () => void;
+  },
+): Promise<string> {
   const key = String(orderId);
   // The farmer already paid but verification failed (e.g. the connection
   // dropped): re-verify the same payment instead of opening Razorpay again,
@@ -181,6 +250,7 @@ export async function payForOrder(
     result = await openCheckout(order, options.title, options.description, options.payer ?? {}, options.color);
     paidAwaitingVerification.set(key, result);
   }
+  options.onAuthorized?.();
   logPayment("pay: sheet finished, verifying with server", { orderId });
   try {
     await verifyRazorpayPayment(result);
@@ -192,4 +262,5 @@ export async function payForOrder(
   }
   paidAwaitingVerification.delete(key);
   logPayment("pay: verified", { orderId });
+  return result.razorpay_payment_id;
 }

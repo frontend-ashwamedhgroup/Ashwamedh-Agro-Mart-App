@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
@@ -46,6 +47,11 @@ export default function ProductDetailScreen() {
   );
 }
 
+/** API text fields can be null or empty; treat anything that is not a non-blank string as missing. */
+function textOf(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function ProductBody({
   product,
   onRefresh,
@@ -65,14 +71,25 @@ function ProductBody({
   const [isAdding, setIsAdding] = useState(false);
   const singleFlight = useSingleFlight();
 
+  // Keyed by URI so a refreshed product with a new image URL gets another chance to load.
+  const [failedImageUri, setFailedImageUri] = useState<string>();
+  const imageFailed = imageSource !== undefined && failedImageUri === imageSource.uri;
+
   const packing = product.packings.find((p) => p.id === packingId);
-  const unitPrice = packing?.unit_price ?? product.unit_price;
-  const inStock = packing ? packing.in_stock : product.in_stock;
-  const available = Number(packing?.quantity_on_hand ?? product.quantity_on_hand);
-  const canBuy = inStock && unitPrice !== null;
+  // A packing's own price/stock wins; a null packing price must not borrow another packing's.
+  const unitPrice = packing ? packing.unit_price : product.unit_price;
+  const currency = packing?.currency ?? product.currency;
+  const inStock = Boolean(packing ? packing.in_stock : product.in_stock);
+  const onHand = Number(packing?.quantity_on_hand ?? product.quantity_on_hand);
+  const available = Number.isFinite(onHand) ? onHand : 0;
+  const canBuy = inStock && unitPrice !== null && unitPrice !== undefined;
   const total = unitPrice ? Number(unitPrice) * quantity : null;
+  const saleUnit = textOf(packing?.sale_unit) || textOf(product.sale_unit);
 
   const detailFields = [
+    ["category", product.category_name],
+    ["saleUnit", saleUnit],
+    ["presentation", product.presentation],
     ["activeIngredient", product.active_ingredient],
     ["formulation", product.formulation],
     ["concentration", product.concentration],
@@ -87,12 +104,12 @@ function ProductBody({
     ["benefits", product.benefits],
   ] as const;
   const detailRows = detailFields
-    .filter(([, value]) => value?.trim())
     .map(([key, value]) => ({
       key,
       label: t(`shopping.detail${key[0].toUpperCase()}${key.slice(1)}`),
-      value: value.trim(),
-    }));
+      value: textOf(value),
+    }))
+    .filter((row) => row.value);
 
   const handleAdd = () =>
     singleFlight(async () => {
@@ -123,18 +140,28 @@ function ProductBody({
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.imageWrap, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-          {imageSource ? (
-            <Image source={imageSource} style={styles.image} contentFit="contain" transition={180} />
-          ) : null}
+          {imageSource && !imageFailed ? (
+            <Image
+              source={imageSource}
+              style={styles.image}
+              contentFit="contain"
+              transition={180}
+              onError={() => setFailedImageUri(imageSource.uri)}
+            />
+          ) : (
+            <View style={styles.imageFallback}>
+              <Ionicons name="image-outline" size={56} color={theme.colors.textMuted} />
+            </View>
+          )}
         </View>
 
         <View style={styles.block}>
-          {product.brand ? (
-            <Text style={[styles.brand, { color: theme.colors.textSecondary }]}>{product.brand}</Text>
+          {textOf(product.brand) ? (
+            <Text style={[styles.brand, { color: theme.colors.textSecondary }]}>{textOf(product.brand)}</Text>
           ) : null}
           <Text style={[styles.name, { color: theme.colors.text }]}>{product.name}</Text>
           <Text style={[styles.price, { color: theme.colors.text }]}>
-            {unitPrice ? formatPrice(unitPrice, product.currency) : t("shopping.priceUnavailable")}
+            {unitPrice ? formatPrice(unitPrice, currency) : t("shopping.priceUnavailable")}
           </Text>
           <Text style={{ color: inStock ? theme.colors.success : theme.colors.error, fontWeight: "600" }}>
             {inStock ? t("shopping.inStock") : t("shopping.outOfStock")}
@@ -172,17 +199,17 @@ function ProductBody({
               })}
             </View>
           </View>
-        ) : product.presentation ? (
+        ) : textOf(defaultPacking?.label) ? (
           <View style={styles.block}>
             <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>{t("shopping.packSize")}</Text>
-            <Text style={{ color: theme.colors.textSecondary }}>{product.presentation}</Text>
+            <Text style={{ color: theme.colors.textSecondary }}>{textOf(defaultPacking?.label)}</Text>
           </View>
         ) : null}
 
-        {product.description ? (
+        {textOf(product.description) ? (
           <View style={styles.block}>
             <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>{t("shopping.description")}</Text>
-            <Text style={[styles.description, { color: theme.colors.textSecondary }]}>{product.description}</Text>
+            <Text style={[styles.description, { color: theme.colors.textSecondary }]}>{textOf(product.description)}</Text>
           </View>
         ) : null}
 
@@ -199,7 +226,7 @@ function ProductBody({
         ) : null}
 
         <Text style={[styles.sku, { color: theme.colors.textMuted }]}>
-          {t("shopping.sku")}: {product.sku}
+          {t("shopping.sku")}: {textOf(product.sku) || t("shopping.notAvailable")}
         </Text>
       </ScrollView>
 
@@ -223,7 +250,7 @@ function ProductBody({
           ) : (
             <Text style={[styles.addText, { color: theme.colors.onPrimary }]}>
               {inCart ? t("shopping.addMore") : t("shopping.addToCart")}
-              {total !== null ? ` · ${formatPrice(total, product.currency)}` : ""}
+              {total !== null ? ` · ${formatPrice(total, currency)}` : ""}
             </Text>
           )}
         </Pressable>
@@ -237,6 +264,7 @@ const styles = StyleSheet.create({
   content: { gap: 20, padding: 20, paddingTop: 4, paddingBottom: 28 },
   imageWrap: { borderRadius: 16, borderWidth: 1, height: 240, overflow: "hidden" },
   image: { height: "100%", width: "100%" },
+  imageFallback: { alignItems: "center", flex: 1, justifyContent: "center" },
   block: { gap: 6 },
   brand: { fontSize: 13, fontWeight: "600" },
   name: { fontSize: 22, fontWeight: "700", lineHeight: 28 },

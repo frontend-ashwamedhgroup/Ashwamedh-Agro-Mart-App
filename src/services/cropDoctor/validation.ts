@@ -99,6 +99,7 @@ export function validateForm(
     errors.waterLitresPerAcre = "positive";
   }
 
+
   const symptoms = values.symptoms.trim();
   if (symptoms && (symptoms.length < SYMPTOMS_MIN || symptoms.length > SYMPTOMS_MAX)) {
     errors.symptoms = "symptomsLength";

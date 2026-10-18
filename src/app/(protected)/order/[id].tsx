@@ -17,7 +17,6 @@ import { ScreenHeader } from "../../../components/shop/ScreenHeader";
 import { CardListSkeleton } from "../../../components/shop/Skeletons";
 import { ErrorView, RefreshFailedNotice } from "../../../components/shop/StateViews";
 import { useAsync } from "../../../hooks/useAsync";
-import { getApiErrorMessage } from "../../../hooks/useFarmerAddresses";
 import { useSingleFlight } from "../../../hooks/useSingleFlight";
 import { isConnectionError } from "../../../services/api/errors";
 import {
@@ -31,7 +30,11 @@ import {
   trackingStatus,
   waitForPaid,
 } from "../../../services/shop/orders";
-import { PaymentCancelledError, payForOrder } from "../../../services/shop/payments";
+import {
+  describePaymentFailure,
+  PaymentCancelledError,
+  payForOrder,
+} from "../../../services/shop/payments";
 import { useTheme } from "../../../theme";
 import { formatPrice } from "../../../utils/money";
 
@@ -92,7 +95,7 @@ export default function OrderDetailScreen() {
         await waitForPaid(id);
       } catch (error: unknown) {
         if (!(error instanceof PaymentCancelledError)) {
-          Alert.alert(t("shopping.paymentFailed"), getApiErrorMessage(error) || t("shopping.tryAgain"));
+          Alert.alert(t("shopping.paymentFailed"), describePaymentFailure(error) || t("shopping.tryAgain"));
         }
       } finally {
         setIsPaying(false);

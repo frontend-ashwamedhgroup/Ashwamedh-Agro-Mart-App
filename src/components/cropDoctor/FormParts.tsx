@@ -6,14 +6,12 @@ import { useTheme } from "../../theme";
 /** Labelled form row with an optional hint and an inline error. */
 export function Field({
   label,
-  required = false,
   hint,
   error,
   warning,
   children,
 }: {
   label: string;
-  required?: boolean;
   hint?: string;
   error?: string | null;
   warning?: string | null;
@@ -24,7 +22,6 @@ export function Field({
     <View style={styles.field}>
       <Text style={[styles.label, { color: theme.colors.text }]}>
         {label}
-        {required ? " *" : ""}
       </Text>
       {children}
       {hint && !error ? (

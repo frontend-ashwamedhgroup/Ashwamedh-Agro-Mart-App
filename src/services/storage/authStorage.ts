@@ -7,6 +7,7 @@ export type AuthUser = {
   id: number;
   mobile_number: string;
   email: string;
+  full_name?: string;
   account_type: string;
   is_active: boolean;
 };

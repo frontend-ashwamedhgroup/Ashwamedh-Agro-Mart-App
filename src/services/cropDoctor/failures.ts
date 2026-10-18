@@ -4,8 +4,8 @@ import { classifyError, isConnectionError, isRecord } from "../api/errors";
 
 /** How a failed Crop Doctor call should be presented, per Crop_Doctor_AI.md. */
 export type CropDoctorFailure =
-  /** 400 `errors.photo`: ask for a new photo; keep every other answer. */
-  | { kind: "photo"; message: string }
+  /** 400 `errors.photo` (+ Marathi `errors.photo_mr`): ask for a new photo; keep every other answer. */
+  | { kind: "photo"; message: string; messageMr?: string }
   /** 400 with per-field arrays: show the first string under each field. */
   | { kind: "fields"; fields: Record<string, string> }
   /** 502 / 503: nothing was saved; the farmer can simply try again. */
@@ -27,8 +27,9 @@ export function toFailure(error: unknown): CropDoctorFailure {
     const errors = isRecord(body) && isRecord(body.errors) ? body.errors : null;
 
     if (status === 400 && errors) {
-      const photo = firstString(errors.photo);
-      if (photo) return { kind: "photo", message: photo };
+      const photoMr = firstString(errors.photo_mr);
+      const photo = firstString(errors.photo) ?? photoMr;
+      if (photo) return { kind: "photo", message: photo, messageMr: photoMr };
 
       const fields: Record<string, string> = {};
       for (const [field, value] of Object.entries(errors)) {

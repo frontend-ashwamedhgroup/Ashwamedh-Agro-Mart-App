@@ -5,7 +5,8 @@
  * throughout the application.
  */
 
-import { Stack } from "expo-router";
+import * as Sentry from "@sentry/react-native";
+import { Stack, useNavigationContainerRef } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import * as SystemUI from "expo-system-ui";
 import { StatusBar } from "expo-status-bar";
@@ -17,11 +18,30 @@ import {
   SafeAreaProvider,
 } from "react-native-safe-area-context";
 
+import { CrashScreen } from "../components/CrashScreen";
 import { NetworkBanner } from "../components/NetworkBanner";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { LanguageProvider } from "../context/LanguageContext";
 import { useLocationPermission } from "../hooks/useLocationPermission";
 import { ThemeProvider, useTheme } from "../theme";
+
+const navigationIntegration = Sentry.reactNavigationIntegration();
+
+Sentry.init({
+  dsn: "https://cb0706e986b2d0d2479b9c3d1c655367@o4509722116882432.ingest.de.sentry.io/4512246808903760",
+  // Crash reporting is only useful for real builds; keep dev noise out.
+  enabled: !__DEV__,
+  // Farmers' personal data stays out of events unless set explicitly.
+  sendDefaultPii: false,
+  enableLogs: true,
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1,
+  integrations: [
+    navigationIntegration,
+    Sentry.mobileReplayIntegration(),
+    Sentry.feedbackIntegration(),
+  ],
+});
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -30,7 +50,15 @@ SplashScreen.setOptions({
   fade: true,
 });
 
-export default function RootLayout() {
+function RootLayout() {
+  const navigationRef = useNavigationContainerRef();
+
+  useEffect(() => {
+    if (navigationRef) {
+      navigationIntegration.registerNavigationContainer(navigationRef);
+    }
+  }, [navigationRef]);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
@@ -100,3 +128,8 @@ function RootNavigator() {
     </Stack>
   );
 }
+
+// Any screen that throws while rendering shows this instead of a blank app.
+export { CrashScreen as ErrorBoundary };
+
+export default Sentry.wrap(RootLayout);

@@ -174,6 +174,7 @@ apiClient.interceptors.request.use(
       console.log(
         `[API] ${(config.method ?? "get").toUpperCase()} ${axios.getUri(config)}`,
       );
+      console.log(`[API] Access token: ${session?.access ?? "none"}`);
     }
 
     return config;

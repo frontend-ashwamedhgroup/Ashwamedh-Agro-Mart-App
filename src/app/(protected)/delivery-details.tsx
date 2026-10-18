@@ -1,5 +1,5 @@
 import { SymbolView } from "expo-symbols";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
@@ -9,7 +9,10 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
+import {
+  KeyboardAwareScrollView,
+  type KeyboardAwareScrollViewRef,
+} from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type {
@@ -18,10 +21,12 @@ import type {
 } from "../../components/location/types";
 import { useBrandColors } from "../../components/location/useBrandColors";
 import {
+  ADDRESS_LINE_MAX,
   getAreaLabel,
   getDisplayLabel,
   isDraftComplete,
   isValidPostalCode,
+  joinParts,
   selectionFromAddress,
 } from "../../components/location/utils";
 import { Skeleton } from "../../components/skeleton/Skeleton";
@@ -70,6 +75,13 @@ export default function DeliveryDetailsSheet() {
   const [error, setError] = useState("");
   const singleFlight = useSingleFlight();
 
+  // The sheet is short, so when the keyboard opens the house / floor field can
+  // end up hidden below it; re-check once the keyboard has finished animating.
+  const scrollRef = useRef<KeyboardAwareScrollViewRef>(null);
+  const keepDetailsVisible = () => {
+    setTimeout(() => scrollRef.current?.assureFocusedInputVisible(), 250);
+  };
+
   const areaIncomplete = !isResolving && !isDraftComplete(draft);
   const areaFieldsVisible = showAreaFields || areaIncomplete;
 
@@ -97,13 +109,15 @@ export default function DeliveryDetailsSheet() {
 
     setIsSaving(true);
     try {
-      // The API requires address_line1, but the farmer's own details are
-      // optional, so fall back to the pinned place name.
-      const addressLine =
-        draft.address_line1.trim() ||
-        place.title ||
-        getAreaLabel(draft) ||
-        draft.city;
+      // The API requires address_line1. The farmer's own details (plot / house
+      // no.) come first, followed by the street-level part of the pinned place;
+      // the area fields are sent separately.
+      const addressLine = joinParts([
+        draft.address_line1,
+        place.line1 || place.title,
+      ])
+        .slice(0, ADDRESS_LINE_MAX)
+        .trim() || getAreaLabel(draft) || draft.city;
       const created = await addresses.createAddress({
         draft: { ...draft, address_line1: addressLine },
         label: t(`location.${draft.address_type}`),
@@ -137,6 +151,7 @@ export default function DeliveryDetailsSheet() {
   return (
     <View style={[styles.sheet, { backgroundColor: colors.background }]}>
       <KeyboardAwareScrollView
+        ref={scrollRef}
         bottomOffset={24}
         contentContainerStyle={styles.form}
         keyboardShouldPersistTaps="handled"
@@ -263,6 +278,7 @@ export default function DeliveryDetailsSheet() {
 
         <TextInput
           accessibilityLabel={t("location.addressDetails")}
+          onFocus={keepDetailsVisible}
           onChangeText={(value) => edit("address_line1", value)}
           placeholder={t("location.addressDetails")}
           placeholderTextColor={colors.textMuted}

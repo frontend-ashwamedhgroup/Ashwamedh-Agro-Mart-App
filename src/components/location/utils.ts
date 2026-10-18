@@ -1,4 +1,5 @@
 import type * as Location from "expo-location";
+import { Platform } from "react-native";
 
 import type {
   AddressDraft,
@@ -101,16 +102,55 @@ export function applyGeocodedAddress(
   draft: AddressDraft,
   place: Location.LocationGeocodedAddress | null,
 ): AddressDraft {
-  const city = place?.city ?? place?.subregion ?? "";
+  const city = place?.city ?? place?.district ?? "";
+  // Android's geocoder puts the locality in `district` and a revenue division
+  // in `subregion`, so neither is a real district there; iOS's `subregion` is
+  // the district. The API requires a district, so fall back to the city to keep
+  // the form submittable without manual entry (the farmer can still edit it).
+  const district =
+    (Platform.OS === "ios" ? place?.subregion : "") || city || "";
 
   return {
     ...draft,
-    village: place?.subregion && place.subregion !== city ? place.subregion : "",
+    village: place?.district && place.district !== city ? place.district : "",
     city,
-    district: place?.district ?? place?.subregion ?? place?.city ?? "",
+    district,
     state: place?.region ?? "",
     postal_code: place?.postalCode ?? "",
   };
+}
+
+/** Longest `address_line1` we send (Django's default CharField limit). */
+export const ADDRESS_LINE_MAX = 255;
+
+/**
+ * Street-level part of the geocoded address for `address_line1`: the formatted
+ * address without the city, locality, state / PIN and country, which are sent
+ * as their own fields. e.g. "Kopargaon MIDC, Plot Number B 57, near Dumping Yard".
+ */
+export function getGeocodedLine(
+  place: Location.LocationGeocodedAddress | null,
+): string {
+  if (!place?.formattedAddress) {
+    return "";
+  }
+
+  const area = new Set(
+    [place.city, place.district, place.country].filter(Boolean),
+  );
+
+  return place.formattedAddress
+    .split(",")
+    .map((part) => part.trim())
+    .filter(
+      (part) =>
+        part &&
+        !area.has(part) &&
+        !(place.region && part.startsWith(place.region)) &&
+        // Plus codes such as "7J9F+XQ" are not deliverable addresses.
+        !/^[A-Z0-9]{4,8}\+[A-Z0-9]{2,}/.test(part),
+    )
+    .join(", ");
 }
 
 /** Short place name for a reverse-geocoded point, e.g. "Sahajanand Nagar". */

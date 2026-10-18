@@ -57,3 +57,5 @@ Crop_Doctor_AI.md
 auth.md
 orderflow.md
 productapi.md
+
+.env.local

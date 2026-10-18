@@ -1,32 +1,46 @@
 // Farmer-facing diagnosis result. Renders only the fields Crop_Doctor_AI.md
 // allows: never product names, SKUs, doses, confidence percentages or internal
 // review flags.
-import type { ReactNode } from "react";
+import { Image } from "expo-image";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from "react-native";
 
+import {
+  availableLanguages,
+  initialLanguage,
+  localizeDiagnosis,
+} from "../../services/cropDoctor/localize";
 import { toDialNumber } from "../../services/cropDoctor/validation";
-import type { Diagnosis } from "../../services/cropDoctor/types";
+import { LanguageToggle } from "./DiagnosisLanguage";
+import type { Diagnosis, DiagnosisLanguage } from "../../services/cropDoctor/types";
 import { useTheme } from "../../theme";
 import { formatPrice } from "../../utils/money";
 
-/** `unsure` and `no_product` send the farmer to the shop by phone. */
+/**
+ * The server sets `contact_phone` only when the farmer should call the shop
+ * (unsure, no product, a rejected answer, or a price that could not be made).
+ */
 export function needsCall(diagnosis: Pick<Diagnosis, "outcome" | "contact_phone">): boolean {
-  return (
-    (diagnosis.outcome === "unsure" || diagnosis.outcome === "no_product") &&
-    toDialNumber(diagnosis.contact_phone).length > 0
-  );
+  return diagnosis.outcome !== "healthy" && toDialNumber(diagnosis.contact_phone).length > 0;
+}
+
+/** A sure diagnosis still waiting for the farmer's Yes / No. */
+export function awaitsConfirmation(
+  diagnosis: Pick<Diagnosis, "outcome" | "confirmation_status">,
+): boolean {
+  return diagnosis.outcome === "sure" && diagnosis.confirmation_status === "pending";
 }
 
 /** i18n key suffix describing where a diagnosis stands, for lists and badges. */
 export function diagnosisStatusKey(
-  diagnosis: Pick<Diagnosis, "outcome" | "price_status">,
-): "pricePreparing" | "priceReady" | "contactShop" | "healthy" | "result" {
+  diagnosis: Pick<Diagnosis, "outcome" | "price_status" | "confirmation_status">,
+): "confirmPending" | "priceReady" | "contactShop" | "healthy" {
   if (diagnosis.outcome === "healthy") return "healthy";
   if (diagnosis.outcome === "unsure" || diagnosis.outcome === "no_product") return "contactShop";
+  if (awaitsConfirmation(diagnosis)) return "confirmPending";
   if (diagnosis.price_status === "ready") return "priceReady";
-  if (diagnosis.price_status === "preparing") return "pricePreparing";
-  return "result";
+  return "contactShop";
 }
 
 export function CallShopButton({ phone }: { phone: string }) {
@@ -56,15 +70,85 @@ export function CallShopButton({ phone }: { phone: string }) {
   );
 }
 
+/** The farmer's own crop photo, shown while it is still on this device. */
+export function CropPhoto({ uri }: { uri: string }) {
+  const { t } = useTranslation();
+  return (
+    <Image
+      accessibilityLabel={t("cropDoctor.yourPhoto")}
+      contentFit="cover"
+      source={{ uri }}
+      style={styles.photo}
+    />
+  );
+}
+
+function DiseaseCard({
+  disease,
+  language,
+}: {
+  disease: NonNullable<Diagnosis["disease"]>;
+  /** Undefined follows the app language. */
+  language?: DiagnosisLanguage;
+}) {
+  const { theme } = useTheme();
+  const { t } = useTranslation("translation", { lng: language });
+  const card = { backgroundColor: theme.colors.surface, borderColor: theme.colors.border };
+  const list = (title: string, items: string[]) =>
+    items.length > 0 ? (
+      <View style={styles.condition}>
+        <Text style={[styles.conditionName, { color: theme.colors.text }]}>{title}</Text>
+        {items.map((line) => (
+          <Text key={line} style={[styles.body, { color: theme.colors.textSecondary }]}>
+            • {line}
+          </Text>
+        ))}
+      </View>
+    ) : null;
+
+  return (
+    <View style={[styles.box, card]}>
+      <Text style={[styles.meta, { color: theme.colors.textMuted }]}>{t("cropDoctor.diseaseTitle")}</Text>
+      <Text style={[styles.heading, { color: theme.colors.text }]}>{disease.name}</Text>
+      {disease.severity_label ? (
+        <Text style={[styles.confidence, { color: theme.colors.text }]}>
+          {t("cropDoctor.severityLabel")}: {disease.severity_label}
+        </Text>
+      ) : null}
+      {list(t("cropDoctor.diseaseSymptoms"), disease.symptoms)}
+      {list(t("cropDoctor.diseaseCauses"), disease.causes)}
+      {list(t("cropDoctor.diseasePrevention"), disease.preventive_measures)}
+      {disease.recommended_treatment ? (
+        <View style={styles.condition}>
+          <Text style={[styles.conditionName, { color: theme.colors.text }]}>
+            {t("cropDoctor.diseaseTreatment")}
+          </Text>
+          <Text style={[styles.body, { color: theme.colors.textSecondary }]}>
+            {disease.recommended_treatment}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 type Props = {
   diagnosis: Diagnosis;
+  /** Local uri of the photo that was sent, when this device still has it. */
+  photoUri?: string;
   /** Extra actions (refresh, offer) rendered inside the result, above the disclaimer. */
   children?: ReactNode;
 };
 
-export function DiagnosisResult({ diagnosis, children }: Props) {
+export function DiagnosisResult({ diagnosis: source, photoUri, children }: Props) {
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  // The result opens in English; the farmer can switch.
+  const [language, setLanguage] = useState<DiagnosisLanguage>(() => initialLanguage(source));
+  const languages = availableLanguages(source);
+  // Older records have English text only; their labels keep following the app language.
+  const textLanguage = languages.length > 0 ? language : undefined;
+  const { t } = useTranslation("translation", { lng: textLanguage });
+  const diagnosis = localizeDiagnosis(source, language);
   const card = { backgroundColor: theme.colors.surface, borderColor: theme.colors.border };
   const isSure = diagnosis.outcome === "sure";
   const conditions = diagnosis.likely_conditions.filter((c) => c.name);
@@ -72,6 +156,11 @@ export function DiagnosisResult({ diagnosis, children }: Props) {
 
   return (
     <View style={styles.wrap}>
+      {languages.length > 1 ? (
+        <LanguageToggle languages={languages} onChange={setLanguage} value={language} />
+      ) : null}
+      {photoUri ? <CropPhoto uri={photoUri} /> : null}
+      {diagnosis.disease ? <DiseaseCard disease={diagnosis.disease} language={textLanguage} /> : null}
       <View style={[styles.box, card]}>
         <Text style={[styles.meta, { color: theme.colors.textMuted }]}>
           {diagnosis.crop_name}
@@ -108,6 +197,26 @@ export function DiagnosisResult({ diagnosis, children }: Props) {
           </>
         ) : null}
 
+        {diagnosis.severity ? (
+          <Text style={[styles.confidence, { color: theme.colors.text }]}>
+            {t("cropDoctor.severityLabel")}:{" "}
+            {t(`cropDoctor.severity.${diagnosis.severity}`, { defaultValue: diagnosis.severity })}
+          </Text>
+        ) : null}
+
+        {diagnosis.observations.length > 0 ? (
+          <View style={styles.condition}>
+            <Text style={[styles.conditionName, { color: theme.colors.text }]}>
+              {t("cropDoctor.observationsTitle")}
+            </Text>
+            {diagnosis.observations.map((line) => (
+              <Text key={line} style={[styles.body, { color: theme.colors.textSecondary }]}>
+                • {line}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+
         {diagnosis.farmer_message ? (
           <Text style={[styles.message, { color: theme.colors.text }]}>
             {diagnosis.farmer_message}
@@ -120,17 +229,6 @@ export function DiagnosisResult({ diagnosis, children }: Props) {
           </Text>
         ) : null}
       </View>
-
-      {isSure && diagnosis.price_status === "preparing" ? (
-        <View style={[styles.box, card]}>
-          <Text style={[styles.heading, { color: theme.colors.text }]}>
-            {t("cropDoctor.pricePreparingTitle")}
-          </Text>
-          <Text style={[styles.body, { color: theme.colors.textSecondary }]}>
-            {t("cropDoctor.pricePreparingBody")}
-          </Text>
-        </View>
-      ) : null}
 
       {showPrice && diagnosis.price ? (
         <View style={[styles.box, card]}>
@@ -148,7 +246,8 @@ export function DiagnosisResult({ diagnosis, children }: Props) {
       {children}
 
       <Text style={[styles.disclaimer, { color: theme.colors.textMuted }]}>
-        {diagnosis.disclaimer || t("cropDoctor.disclaimerFallback")}
+        {/* The server disclaimer is English only; the Marathi copy is the same text. */}
+        {textLanguage === "mr" ? t("cropDoctor.disclaimerFallback") : diagnosis.disclaimer || t("cropDoctor.disclaimerFallback")}
       </Text>
     </View>
   );
@@ -156,6 +255,7 @@ export function DiagnosisResult({ diagnosis, children }: Props) {
 
 const styles = StyleSheet.create({
   wrap: { gap: 12 },
+  photo: { aspectRatio: 4 / 3, borderRadius: 14, width: "100%" },
   box: { borderRadius: 14, borderWidth: 1, gap: 8, padding: 14 },
   meta: { fontSize: 12, fontWeight: "600" },
   heading: { fontSize: 16, fontWeight: "700" },

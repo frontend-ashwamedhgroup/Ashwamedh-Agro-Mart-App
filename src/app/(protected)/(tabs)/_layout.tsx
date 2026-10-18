@@ -51,7 +51,7 @@ export default function TabsLayout() {
         </NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           sf={{ default: "square.grid.2x2", selected: "square.grid.2x2.fill" }}
-          md={{ default: "category", selected: "category" }}
+          md={{ default: "grid_view", selected: "grid_view" }}
         />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="diagnosis">

@@ -1,9 +1,9 @@
 // New crop diagnosis: photo + short form. The photo is uploaded first, then the
 // diagnosis is created with the returned image_id (Crop_Doctor_AI.md §2-3).
 // Every failure keeps the form; only a rejected photo is cleared.
-import { Image } from "expo-image";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
@@ -24,7 +24,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CalendarButton } from "../../../components/cropDoctor/CalendarButton";
 import { CameraCapture } from "../../../components/cropDoctor/CameraCapture";
 import { CropDropdown } from "../../../components/cropDoctor/CropDropdown";
-import { Chip, Field } from "../../../components/cropDoctor/FormParts";
+import { Field } from "../../../components/cropDoctor/FormParts";
+import { PhotoPicker } from "../../../components/cropDoctor/PhotoPicker";
 import { ScreenHeader } from "../../../components/shop/ScreenHeader";
 import { SHOP_BRANCH_ID } from "../../../config/branch";
 import { useAsync } from "../../../hooks/useAsync";
@@ -39,27 +40,16 @@ import {
 import { toFailure } from "../../../services/cropDoctor/failures";
 import { pickFromLibrary, preparePhoto, type PhotoResult } from "../../../services/cropDoctor/photo";
 import type {
-  ApplicationMethod,
   DiagnosisRequest,
   PickedPhoto,
 } from "../../../services/cropDoctor/types";
 import {
-  daysAgoDate,
-  maskDate,
-  SYMPTOMS_MAX,
   toDecimalString,
   validateForm,
   type FormFieldName,
 } from "../../../services/cropDoctor/validation";
 import { useTheme } from "../../../theme";
 
-const METHODS: ApplicationMethod[] = ["spray", "soil_drench", "drip"];
-const DATE_SHORTCUTS = [
-  { key: "dateToday", days: 0 },
-  { key: "dateWeek", days: 7 },
-  { key: "dateMonth", days: 30 },
-  { key: "dateTwoMonths", days: 60 },
-] as const;
 
 type FieldErrors = Partial<Record<FormFieldName, string>>;
 
@@ -76,7 +66,7 @@ const SERVER_FIELD: Record<string, FormFieldName> = {
 
 export default function NewDiagnosisScreen() {
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const singleFlight = useSingleFlight();
   const scrollRef = useRef<KeyboardAwareScrollViewRef>(null);
   const crops = useAsync(fetchCrops, []);
@@ -89,7 +79,6 @@ export default function NewDiagnosisScreen() {
   const [sowingDate, setSowingDate] = useState("");
   const [area, setArea] = useState("");
   const [water, setWater] = useState("");
-  const [method, setMethod] = useState<ApplicationMethod | null>(null);
   const [symptoms, setSymptoms] = useState("");
 
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -164,11 +153,6 @@ export default function NewDiagnosisScreen() {
     }
   };
 
-  const pickDate = (daysAgo: number) => {
-    setSowingDate(daysAgoDate(daysAgo));
-    clearError("sowingDate");
-  };
-
   const errorText = (code: string | undefined) => (code ? t(`cropDoctor.errors.${code}`) : undefined);
 
   const submit = () =>
@@ -180,7 +164,6 @@ export default function NewDiagnosisScreen() {
         sowingDate,
         area,
         water,
-        method,
         symptomsLength: symptoms.trim().length,
       });
       setBanner(null);
@@ -227,7 +210,6 @@ export default function NewDiagnosisScreen() {
           sowing_date: sowingDate,
           area_acres: toDecimalString(area),
           water_litres_per_acre: toDecimalString(water),
-          ...(method ? { application_method: method } : {}),
           ...(symptoms.trim() ? { symptoms: symptoms.trim() } : {}),
         };
         console.log("[CropDoctor] creating diagnosis", request);
@@ -239,7 +221,7 @@ export default function NewDiagnosisScreen() {
         });
         router.replace({
           pathname: "/(protected)/crop-doctor/[id]",
-          params: { id: String(diagnosis.id) },
+          params: { id: String(diagnosis.id), photoUri: photo.uri },
         });
       } catch (error: unknown) {
         const failure = toFailure(error);
@@ -255,7 +237,10 @@ export default function NewDiagnosisScreen() {
             // Nothing was saved; keep all answers and ask for a new photo.
             setPhoto(null);
             setImageId(null);
-            setErrors({ photo: failure.message });
+            setErrors({
+              // Marathi app language shows the server's Marathi text when it sent one.
+              photo: i18n.language === "mr" && failure.messageMr ? failure.messageMr : failure.message,
+            });
             scrollRef.current?.scrollTo({ y: 0, animated: true });
             break;
           case "fields": {
@@ -299,7 +284,7 @@ export default function NewDiagnosisScreen() {
               if (existing) {
                 router.replace({
                   pathname: "/(protected)/crop-doctor/[id]",
-                  params: { id: String(existing.id) },
+                  params: { id: String(existing.id), photoUri: photo.uri },
                 });
                 return;
               }
@@ -315,6 +300,11 @@ export default function NewDiagnosisScreen() {
         setStep("idle");
       }
     });
+
+  // The notice sits above the submit button, so bring it into view when it appears.
+  useEffect(() => {
+    if (banner) setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
+  }, [banner]);
 
   const card = { backgroundColor: theme.colors.surface, borderColor: theme.colors.border };
   const input = [styles.input, card, { color: theme.colors.text }];
@@ -339,55 +329,31 @@ export default function NewDiagnosisScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {banner ? (
-            <View
-              accessibilityRole="alert"
-              style={[styles.banner, { backgroundColor: theme.colors.surface, borderColor: theme.colors.error }]}
-            >
-              <Text style={{ color: theme.colors.text, lineHeight: 20 }}>{banner}</Text>
-              <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
-                {t("cropDoctor.answersKept")}
-              </Text>
-            </View>
-          ) : null}
-
-          <Field label={t("cropDoctor.photoLabel")} required hint={t("cropDoctor.photoHint")} error={errors.photo}>
-            {photo ? (
-              <Image
-                accessibilityLabel={t("cropDoctor.photoLabel")}
-                contentFit="cover"
-                source={{ uri: photo.uri }}
-                style={[styles.preview, card]}
-              />
-            ) : null}
-            <View style={styles.row}>
-              <Pressable
-                accessibilityRole="button"
-                disabled={busy}
-                onPress={() => {
-                  console.log("[CropDoctor] camera opened");
-                  setCameraOpen(true);
-                }}
-                style={[styles.photoButton, { backgroundColor: theme.colors.primary, opacity: busy ? 0.5 : 1 }]}
-              >
-                <Text style={{ color: theme.colors.onPrimary, fontWeight: "700" }}>
-                  {photo ? t("cropDoctor.retakePhoto") : t("cropDoctor.takePhoto")}
-                </Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                disabled={busy}
-                onPress={() => void chooseFromLibrary()}
-                style={[styles.photoButton, card, { opacity: busy ? 0.5 : 1 }]}
-              >
-                <Text style={{ color: theme.colors.text, fontWeight: "700" }}>
-                  {t("cropDoctor.chooseGallery")}
-                </Text>
-              </Pressable>
-            </View>
+          <Field label={t("cropDoctor.photoLabel")} error={errors.photo}>
+            <PhotoPicker
+              busy={busy}
+              hasError={!!errors.photo}
+              onCamera={() =>
+                Alert.alert(t("cropDoctor.captureTipsTitle"), t("cropDoctor.captureTipsBody"), [
+                  {
+                    text: t("cropDoctor.captureTipsContinue"),
+                    onPress: () => {
+                      console.log("[CropDoctor] camera opened");
+                      setCameraOpen(true);
+                    },
+                  },
+                ])
+              }
+              onGallery={() => void chooseFromLibrary()}
+              onRemove={() => {
+                setPhoto(null);
+                setImageId(null);
+              }}
+              photo={photo}
+            />
           </Field>
 
-          <Field label={t("cropDoctor.cropLabel")} required error={errors.crop}>
+          <Field label={t("cropDoctor.cropLabel")} error={errors.crop}>
             {crops.isLoading && !crops.data ? (
               <ActivityIndicator color={theme.colors.primary} />
             ) : !crops.data ? (
@@ -416,48 +382,19 @@ export default function NewDiagnosisScreen() {
 
           <Field
             label={t("cropDoctor.sowingDateLabel")}
-            required
-            hint={t("cropDoctor.sowingDateHint")}
             error={errors.sowingDate}
           >
-            <View style={styles.row}>
-              <TextInput
-                accessibilityLabel={t("cropDoctor.sowingDateLabel")}
-                keyboardType="number-pad"
-                maxLength={10}
-                onChangeText={(text) => {
-                  setSowingDate(maskDate(text));
-                  clearError("sowingDate");
-                }}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={theme.colors.textMuted}
-                style={[...input, styles.flex]}
-                value={sowingDate}
-              />
-              <CalendarButton
-                onPick={(date) => {
-                  setSowingDate(date);
-                  clearError("sowingDate");
-                }}
-                value={sowingDate}
-              />
-            </View>
-            <View style={styles.chips}>
-              {DATE_SHORTCUTS.map((shortcut) => (
-                <Chip
-                  key={shortcut.key}
-                  label={t(`cropDoctor.${shortcut.key}`)}
-                  selected={sowingDate === daysAgoDate(shortcut.days)}
-                  onPress={() => pickDate(shortcut.days)}
-                />
-              ))}
-            </View>
+            <CalendarButton
+              onPick={(date) => {
+                setSowingDate(date);
+                clearError("sowingDate");
+              }}
+              value={sowingDate}
+            />
           </Field>
 
           <Field
             label={t("cropDoctor.areaLabel")}
-            required
-            hint={t("cropDoctor.areaHint")}
             error={errors.areaAcres}
           >
             <TextInput
@@ -467,7 +404,7 @@ export default function NewDiagnosisScreen() {
                 setArea(text);
                 clearError("areaAcres");
               }}
-              placeholder="2.0"
+              placeholder="1.0"
               placeholderTextColor={theme.colors.textMuted}
               style={input}
               value={area}
@@ -476,8 +413,6 @@ export default function NewDiagnosisScreen() {
 
           <Field
             label={t("cropDoctor.waterLabel")}
-            required
-            hint={t("cropDoctor.waterHint")}
             error={errors.waterLitresPerAcre}
           >
             <TextInput
@@ -494,21 +429,7 @@ export default function NewDiagnosisScreen() {
             />
           </Field>
 
-          <Field label={t("cropDoctor.methodLabel")} hint={t("cropDoctor.optional")}>
-            <View style={styles.chips}>
-              {METHODS.map((option) => (
-                <Chip
-                  key={option}
-                  label={t(`cropDoctor.method.${option}`)}
-                  selected={method === option}
-                  // Tapping the chosen method again leaves it out of the request.
-                  onPress={() => setMethod((current) => (current === option ? null : option))}
-                />
-              ))}
-            </View>
-          </Field>
-
-          <Field
+          {/* <Field
             label={t("cropDoctor.symptomsLabel")}
             hint={`${t("cropDoctor.symptomsHint")} (${symptoms.trim().length}/${SYMPTOMS_MAX})`}
             error={errors.symptoms}
@@ -526,10 +447,20 @@ export default function NewDiagnosisScreen() {
               style={[...input, styles.multiline]}
               value={symptoms}
             />
-          </Field>
-        </KeyboardAwareScrollView>
+          </Field> */}
 
-        <View style={[styles.bar, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border }]}>
+          {banner ? (
+            <View
+              accessibilityRole="alert"
+              style={[styles.banner, { backgroundColor: theme.colors.surface, borderColor: theme.colors.error }]}
+            >
+              <Text style={{ color: theme.colors.text, lineHeight: 20 }}>{banner}</Text>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
+                {t("cropDoctor.answersKept")}
+              </Text>
+            </View>
+          ) : null}
+
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ disabled: busy, busy }}
@@ -537,12 +468,20 @@ export default function NewDiagnosisScreen() {
             onPress={() => void submit()}
             style={[styles.submit, { backgroundColor: theme.colors.primary, opacity: busy ? 0.7 : 1 }]}
           >
-            {busy ? <ActivityIndicator color={theme.colors.onPrimary} /> : null}
+            {busy ? (
+              <ActivityIndicator color={theme.colors.onPrimary} />
+            ) : (
+              <Ionicons
+                color={theme.colors.onPrimary}
+                name={banner ? "refresh" : "sparkles"}
+                size={20}
+              />
+            )}
             <Text style={[styles.submitText, { color: theme.colors.onPrimary }]}>
               {banner && !busy ? t("shopping.retry") : submitLabel}
             </Text>
           </Pressable>
-        </View>
+        </KeyboardAwareScrollView>
       </View>
       <CameraCapture
         onCaptured={(shot) => void onCameraCaptured(shot)}
@@ -566,20 +505,8 @@ const styles = StyleSheet.create({
   box: { borderRadius: 14, borderWidth: 1, gap: 8, padding: 14 },
   row: { flexDirection: "row", gap: 10 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  preview: { aspectRatio: 4 / 3, borderRadius: 14, borderWidth: 1, width: "100%" },
-  photoButton: {
-    alignItems: "center",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "transparent",
-    flex: 1,
-    justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: 8,
-  },
   input: { borderRadius: 12, borderWidth: 1, fontSize: 15, minHeight: 48, paddingHorizontal: 14 },
   multiline: { minHeight: 96, paddingTop: 12, textAlignVertical: "top" },
-  bar: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 20, paddingVertical: 12 },
   submit: {
     alignItems: "center",
     borderRadius: 14,

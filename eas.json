@@ -32,6 +32,9 @@
       "android": {
         "serviceAccountKeyPath": "./ashwamedh-agro-mart.json",
         "track": "production"
+      },
+       "ios": {
+        "ascAppId": "6821248962"
       }
     }
   }

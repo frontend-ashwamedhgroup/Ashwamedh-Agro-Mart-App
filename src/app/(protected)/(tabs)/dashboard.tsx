@@ -1,9 +1,8 @@
 // Home dashboard for agricultural shopping and crop diagnosis.
+import { Ionicons } from "@expo/vector-icons";
 import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
-import { useState } from "react";
 import {
-  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -29,12 +28,11 @@ import { fetchProducts } from "../../../services/shop/api";
 import { fetchNotifications } from "../../../services/shop/notifications";
 
 export default function DashboardScreen() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const {
-    data: popularProducts,
+    data: products,
     isLoading: productsLoading,
     error: productsError,
     reload: reloadProducts,
@@ -47,7 +45,7 @@ export default function DashboardScreen() {
   const refresh = () => Promise.all([reloadProducts(), reloadNotifications()]);
   const hasUnread = (notifications ?? []).some((n) => n.status === "unread");
 
-  const displayName = user?.mobile_number?.trim() || "";
+  const displayName = user?.full_name?.trim() || user?.mobile_number?.trim() || "";
 
   return (
     <SafeAreaView
@@ -62,7 +60,7 @@ export default function DashboardScreen() {
         <View style={styles.header}>
           <View style={styles.greetingWrap}>
             <Text style={[styles.greeting, { color: theme.colors.text }]}>
-              Namaskar,
+              {t("dashboard.greeting")}
             </Text>
             <Text style={[styles.wave, { color: theme.colors.text }]}>
               {displayName}{" "}
@@ -135,54 +133,75 @@ export default function DashboardScreen() {
             },
           ]}
         >
-          <View
-            style={[styles.diagnosisPill, { borderColor: theme.colors.border }]}
-          >
-            <View
-              style={[styles.pillDot, { backgroundColor: theme.colors.text }]}
-            />
-            <Text style={[styles.pillText, { color: theme.colors.text }]}>
-              SMART DIAGNOSIS
-            </Text>
-          </View>
           <Text style={[styles.doctorTitle, { color: theme.colors.text }]}>
-            AI Crop Doctor
+            {t("cropDoctor.title")}
           </Text>
           <Text
             style={[styles.doctorCopy, { color: theme.colors.textSecondary }]}
           >
-            Identify crop problems using a photo
+            {t("cropDoctor.heroTitle")}
           </Text>
+          <View style={styles.doctorSteps}>
+            {(
+              [
+                ["camera-outline", "cropDoctor.how1Title"],
+                ["scan-outline", "cropDoctor.how2Title"],
+                ["pricetag-outline", "cropDoctor.how3Title"],
+              ] as const
+            ).map(([icon, key]) => (
+              <View
+                key={key}
+                style={[
+                  styles.doctorStep,
+                  { backgroundColor: theme.colors.background },
+                ]}
+              >
+                <Ionicons color={theme.colors.text} name={icon} size={16} />
+                <Text
+                  numberOfLines={1}
+                  style={[styles.doctorStepText, { color: theme.colors.text }]}
+                >
+                  {t(key)}
+                </Text>
+              </View>
+            ))}
+          </View>
           <Pressable
             accessibilityRole="button"
             onPress={() => router.push("/(protected)/crop-doctor/new")}
-            style={[
+            style={({ pressed }) => [
               styles.primaryButton,
-              { backgroundColor: theme.colors.primary },
+              { backgroundColor: theme.colors.primary, opacity: pressed ? 0.85 : 1 },
             ]}
           >
+            <Ionicons color={theme.colors.onPrimary} name="camera" size={20} />
             <Text
               style={[
                 styles.primaryButtonText,
                 { color: theme.colors.onPrimary },
               ]}
             >
-              ▣ Check My Crop
+              {t("cropDoctor.startNew")}
             </Text>
+            <Ionicons
+              color={theme.colors.onPrimary}
+              name="arrow-forward"
+              size={18}
+            />
           </Pressable>
         </View>
 
         <SectionHeader
-          title={t("shopping.popularProducts")}
+          title={t("shopping.exploreProducts")}
           onAction={() => router.push("/(protected)/products")}
         />
-        {productsLoading && !popularProducts ? (
+        {productsLoading && !products ? (
           <ProductGridSkeleton padded={false} />
-        ) : !popularProducts ? (
+        ) : !products ? (
           <View style={styles.stateBox}>
             <ErrorView message={productsError} onRetry={reloadProducts} />
           </View>
-        ) : popularProducts.length === 0 ? (
+        ) : products.length === 0 ? (
           <View style={styles.stateBox}>
             <MessageView
               title={t("shopping.noProducts")}
@@ -193,7 +212,7 @@ export default function DashboardScreen() {
           <>
             <RefreshFailedNotice flush error={productsError} onRetry={reloadProducts} />
             <View style={styles.productGrid}>
-              {popularProducts.slice(0, 6).map((product) => (
+              {products.slice(0, 6).map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}
             </View>
@@ -303,29 +322,38 @@ const styles = StyleSheet.create({
   categoryName: { width: 100, textAlign: "center", fontSize: 14 },
   doctorCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 24,
+    borderRadius: 20,
+    padding: 20,
     marginBottom: 38,
   },
-  diagnosisPill: {
-    width: 176,
-    minHeight: 27,
-    borderWidth: 1,
-    borderRadius: 14,
+  doctorIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  doctorTitle: { fontSize: 25, fontWeight: "800", marginBottom: 6 },
+  doctorCopy: { fontSize: 15, lineHeight: 21, marginBottom: 16 },
+  doctorSteps: { flexDirection: "row", gap: 8, marginBottom: 20 },
+  doctorStep: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
-    marginBottom: 12,
+    justifyContent: "center",
+    gap: 5,
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
   },
-  pillDot: { width: 7, height: 7, borderRadius: 4, marginRight: 8 },
-  pillText: { fontSize: 12, fontWeight: "600" },
-  doctorTitle: { fontSize: 25, fontWeight: "700", marginBottom: 6 },
-  doctorCopy: { fontSize: 16, marginLeft: -3, marginBottom: 22 },
+  doctorStepText: { flexShrink: 1, fontSize: 12, fontWeight: "600" },
   primaryButton: {
     height: 56,
     borderRadius: 14,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 10,
   },
   primaryButtonText: { fontSize: 17, fontWeight: "700" },
   shopList: { gap: 14, paddingRight: 20, paddingBottom: 38 },
